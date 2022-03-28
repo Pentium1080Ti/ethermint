@@ -321,6 +321,8 @@ func (api *pubSubAPI) subscribe(wsConn *wsConn, params []interface{}) (rpc.ID, e
 		return api.subscribeLogs(wsConn, nil)
 	case "newPendingTransactions":
 		return api.subscribePendingTransactions(wsConn)
+	case "newPendingOracleTransactions":
+		return api.subscribePendingTransactions(wsConn)
 	case "syncing":
 		return api.subscribeSyncing(wsConn)
 	default:
@@ -718,6 +720,83 @@ func (api *pubSubAPI) subscribePendingTransactions(wsConn *wsConn) (rpc.ID, erro
 					return
 				}
 				api.logger.Debug("dropping PendingTransactions WebSocket subscription", subID, "error", err.Error())
+				api.unsubscribe(subID)
+			case <-unsubscribed:
+				return
+			}
+		}
+	}(sub.Event(), sub.Err())
+
+	return subID, nil
+}
+
+func (api *pubSubAPI) subscribePendingOracleTransactions(wsConn *wsConn) (rpc.ID, error) {
+	query := "subscribePendingOracleTransactions"
+	subID := rpc.NewID()
+
+	sub, _, err := api.events.SubscribePendingTxs()
+	if err != nil {
+		return "", errors.Wrap(err, "error creating block filter: %s")
+	}
+
+	unsubscribed := make(chan struct{})
+	api.filtersMu.Lock()
+	api.filters[subID] = &wsSubscription{
+		sub:          sub,
+		wsConn:       wsConn,
+		unsubscribed: unsubscribed,
+		query:        query,
+	}
+	api.filtersMu.Unlock()
+
+	go func(txsCh <-chan coretypes.ResultEvent, errCh <-chan error) {
+		for {
+			select {
+			case ev := <-txsCh:
+				data, _ := ev.Data.(tmtypes.EventDataTx)
+				txHash := common.BytesToHash(tmtypes.Tx(data.Tx).Hash())
+
+				api.filtersMu.RLock()
+				for subID, wsSub := range api.filters {
+					subID := subID
+					wsSub := wsSub
+					if wsSub.query != query {
+						continue
+					}
+					// write to ws conn
+					res := &SubscriptionNotification{
+						Jsonrpc: "2.0",
+						Method:  "eth_subscription",
+						Params: &SubscriptionResult{
+							Subscription: subID,
+							Result:       txHash,
+						},
+					}
+
+					err = wsSub.wsConn.WriteJSON(res)
+					if err != nil {
+						api.logger.Debug("error writing header, will drop peer", "error", err.Error())
+
+						try(func() {
+							api.filtersMu.Lock()
+							defer api.filtersMu.Unlock()
+
+							if err != websocket.ErrCloseSent {
+								_ = wsSub.wsConn.Close()
+							}
+
+							delete(api.filters, subID)
+							close(wsSub.unsubscribed)
+						}, api.logger, "closing websocket peer sub")
+					}
+				}
+				api.filtersMu.RUnlock()
+			case err, ok := <-errCh:
+				if !ok {
+					api.unsubscribe(subID)
+					return
+				}
+				api.logger.Debug("dropping PendingOracleTransactions WebSocket subscription", subID, "error", err.Error())
 				api.unsubscribe(subID)
 			case <-unsubscribed:
 				return

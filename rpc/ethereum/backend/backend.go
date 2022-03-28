@@ -49,6 +49,7 @@ type Backend interface {
 	HeaderByNumber(blockNum types.BlockNumber) (*ethtypes.Header, error)
 	HeaderByHash(blockHash common.Hash) (*ethtypes.Header, error)
 	PendingTransactions() ([]*sdk.Tx, error)
+	PendingOracleTransactions() ([]*sdk.Tx, error)
 	GetTransactionLogs(txHash common.Hash) ([]*ethtypes.Log, error)
 	GetTransactionCount(address common.Address, blockNum types.BlockNumber) (*hexutil.Uint64, error)
 	SendTransaction(args types.SendTxArgs) (common.Hash, error)
@@ -448,6 +449,29 @@ func (e *EVMBackend) PendingTransactions() ([]*sdk.Tx, error) {
 		if err != nil {
 			return nil, err
 		}
+		result = append(result, &tx)
+	}
+
+	return result, nil
+}
+
+func (e *EVMBackend) PendingOracleTransactions() ([]*sdk.Tx, error) {
+	res, err := e.clientCtx.Client.UnconfirmedTxs(e.ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*sdk.Tx, 0, len(res.Txs))
+	for _, txBz := range res.Txs {
+		tx, err := e.clientCtx.TxConfig.TxDecoder()(txBz)
+		if err != nil {
+			return nil, err
+		}
+		x, y := e.clientCtx.Client.Tx(e.ctx, txBz.Hash(), false)
+		if y != nil {
+			return nil, err
+		}
+		e.logger.Info("Intern(al) testing tx: " + string(txBz.Hash()) + "\t data: " + string(x.TxResult.GetData()))
 		result = append(result, &tx)
 	}
 

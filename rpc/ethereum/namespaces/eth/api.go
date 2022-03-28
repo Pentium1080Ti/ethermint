@@ -724,6 +724,39 @@ func (e *PublicAPI) GetPendingTransactions() ([]*rpctypes.RPCTransaction, error)
 	return result, nil
 }
 
+func (e *PublicAPI) GetPendingOracleTransactions() ([]*rpctypes.RPCTransaction, error) {
+	e.logger.Debug("eth_getPendingOracleTransactions")
+
+	txs, err := e.backend.PendingOracleTransactions()
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*rpctypes.RPCTransaction, 0, len(txs))
+	for _, tx := range txs {
+		msg, err := evmtypes.UnwrapEthereumMsg(tx)
+		if err != nil {
+			// not valid ethereum tx
+			continue
+		}
+
+		rpctx, err := rpctypes.NewTransactionFromMsg(
+			msg,
+			common.Hash{},
+			uint64(0),
+			uint64(0),
+			e.chainIDEpoch,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, rpctx)
+	}
+
+	return result, nil
+}
+
 // GetUncleByBlockHashAndIndex returns the uncle identified by hash and index. Always returns nil.
 func (e *PublicAPI) GetUncleByBlockHashAndIndex(hash common.Hash, idx hexutil.Uint) map[string]interface{} {
 	return nil

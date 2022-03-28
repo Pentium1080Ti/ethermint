@@ -215,6 +215,20 @@ func (es EventSystem) SubscribePendingTxs() (*Subscription, context.CancelFunc, 
 	return es.subscribe(sub)
 }
 
+/* requires geth change - pubsub will use old pendingtxs */
+func (es EventSystem) SubscribePendingOracleTxs() (*Subscription, context.CancelFunc, error) {
+	sub := &Subscription{
+		id:        rpc.NewID(),
+		typ:       filters.PendingTransactionsSubscription,
+		event:     txEvents,
+		created:   time.Now().UTC(),
+		hashes:    make(chan []common.Hash),
+		installed: make(chan struct{}, 1),
+		err:       make(chan error, 1),
+	}
+	return es.subscribe(sub)
+}
+
 type filterIndex map[filters.Type]map[rpc.ID]*Subscription
 
 // eventLoop (un)installs filters and processes mux events.
